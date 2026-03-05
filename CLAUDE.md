@@ -62,11 +62,25 @@ SAP_URL=http://host:50000 SAP_USER=user SAP_PASSWORD=pass ./vsp
 | `SAP_FEATURE_AMDP` / `--feature-amdp` | AMDP/HANA debugger: auto, on, off (default: auto) |
 | `SAP_FEATURE_UI5` / `--feature-ui5` | UI5/Fiori BSP management: auto, on, off (default: auto) |
 | `SAP_FEATURE_TRANSPORT` / `--feature-transport` | CTS transport management: auto, on, off (default: auto) |
+| **RFC Connection Settings** | |
+| `SAP_CONNECTION_MODE` / `--connection-mode` | Connection mode: `http` (default) or `rfc` |
+| `SAP_ASHOST` / `--ashost` | Application server hostname (direct RFC) |
+| `SAP_SYSNR` / `--sysnr` | System number, e.g. `00` (direct RFC) |
+| `SAP_MSHOST` / `--mshost` | Message server host (load-balanced RFC) |
+| `SAP_MSSERV` / `--msserv` | Message server service/port (load-balanced RFC) |
+| `SAP_R3NAME` / `--r3name` | SAP system name (load-balanced RFC) |
+| `SAP_GROUP` / `--group` | Logon group (load-balanced RFC) |
+| `SAP_JCO_PROXY_JAR` / `--jco-proxy-jar` | Path to jco-proxy JAR file |
+| `SAP_JCO_LIBS_DIR` / `--jco-libs-dir` | Path to JCo libraries directory |
+| `SAP_JAVA_PATH` / `--java-path` | Path to Java binary (default: `java`) |
+| `SAP_RFC_PROXY_PORT` / `--rfc-proxy-port` | Fixed sidecar port (0 = auto-assign) |
+| `SAP_RFC_MAX_CONCURRENT` / `--rfc-max-concurrent` | Max concurrent RFC calls (default: 5) |
 
 ## Codebase Structure
 
 ```
 cmd/vsp/main.go       # Entry point
+cmd/vsp/jco.go        # JCo setup wizard (vsp jco setup/status)
 internal/mcp/server.go       # MCP server (122 tool handlers, mode-aware)
 pkg/
 ├── adt/
@@ -82,8 +96,11 @@ pkg/
 │   ├── safety.go             # Safety & protection configuration
 │   ├── safety_test.go        # Safety unit tests (25 tests)
 │   ├── features.go           # Feature detection (safety network)
-│   ├── http.go               # HTTP transport (CSRF, sessions)
-│   ├── config.go             # Configuration
+│   ├── http.go               # HTTP transport + Requester interface (CSRF, sessions)
+│   ├── rfc_transport.go      # RFC transport (proxies via Java sidecar)
+│   ├── sidecar.go            # Java JCo sidecar lifecycle management
+│   ├── jco_discovery.go      # JCo library discovery (Eclipse ADT plugins)
+│   ├── config.go             # Configuration (HTTP + RFC settings)
 │   ├── cookies.go            # Cookie file parsing (Netscape format)
 │   └── xml.go                # XML types
 │
@@ -107,6 +124,17 @@ pkg/
     ├── cache_test.go         # Unit tests (16 tests)
     ├── example_test.go       # Usage examples
     └── README.md             # Documentation
+
+sidecar/jco-proxy/            # Java JCo sidecar (RFC mode)
+├── pom.xml                   # Maven build (shaded JAR)
+└── src/main/java/com/sap/mcp/proxy/
+    ├── RfcProxyServer.java          # HTTP server (Javalin) with /rfc-proxy and /rfc-call
+    ├── RestRfcEndpointCaller.java   # SADT_REST_RFC_ENDPOINT caller
+    ├── DirectRfcCaller.java         # Direct function module caller
+    ├── JCoConnectionManager.java    # JCo connection pool management
+    ├── StatefulSessionManager.java  # SAP session (sap-contextid) management
+    ├── config/ConnectionConfig.java # CLI arg parsing for SAP connection params
+    └── model/                       # ProxyRequest, ProxyResponse, RfcCallRequest/Response
 ```
 
 ## Key Files for Common Tasks
@@ -124,6 +152,11 @@ pkg/
 | Add workflow | `pkg/adt/workflows.go` |
 | Add XML types | `pkg/adt/xml.go` |
 | Add integration test | `pkg/adt/integration_test.go` |
+| Modify RFC transport | `pkg/adt/rfc_transport.go` |
+| Modify sidecar lifecycle | `pkg/adt/sidecar.go` |
+| Modify JCo discovery | `pkg/adt/jco_discovery.go` |
+| Modify Java sidecar | `sidecar/jco-proxy/src/...` |
+| Add RFC CLI flags | `cmd/vsp/main.go`, `cmd/vsp/jco.go` |
 
 ## Adding a New Tool
 
@@ -384,6 +417,7 @@ When creating a new report:
 | **Class Includes** | ✅ Complete (v2.12 - testclasses, locals_def, locals_imp, macros) |
 | **abapGit Integration** | ✅ Complete (v2.16.0 - WebSocket, GitTypes, GitExport - 158 object types) |
 | **Install Tools** | ✅ Complete (v2.17.0 - InstallZADTVSP, InstallAbapGit, ListDependencies) |
+| **RFC Mode** | ✅ Complete (JCo sidecar, Requester abstraction, `vsp jco setup/status`) |
 
 ### DSL & Workflow Usage
 

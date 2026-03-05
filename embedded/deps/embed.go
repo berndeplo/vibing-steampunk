@@ -24,6 +24,12 @@ import (
 // //go:embed abapgit-dev.zip
 // var AbapGitDev []byte
 
+// Embedded JCo proxy JAR (shaded, ~6MB). Our code, not SAP proprietary.
+// Build with: cd sidecar/jco-proxy && mvn package && cp target/jco-proxy-1.0.0.jar ../../embedded/deps/jco-proxy.jar
+//
+//go:embed jco-proxy.jar
+var JcoProxyJar []byte
+
 // DependencyInfo describes an available dependency package.
 type DependencyInfo struct {
 	Name        string // e.g., "abapgit-standalone", "abapgit-dev"
@@ -32,6 +38,21 @@ type DependencyInfo struct {
 	Available   bool     // Whether ZIP is embedded
 	FileCount   int      // Number of files in ZIP
 	Objects     []string // Object names (populated on load)
+}
+
+// GetEmbeddedProxyJar returns the embedded jco-proxy.jar bytes, or nil if not available.
+func GetEmbeddedProxyJar() []byte {
+	if len(JcoProxyJar) == 0 {
+		return nil
+	}
+	return JcoProxyJar
+}
+
+// GetDependencyZIP returns the embedded ZIP data for a dependency, or nil if not available.
+func GetDependencyZIP(name string) []byte {
+	// ZIP files are not yet embedded — return nil for all dependencies.
+	// When ready, embed the ZIPs and add cases here.
+	return nil
 }
 
 // GetAvailableDependencies returns list of embedded dependencies.

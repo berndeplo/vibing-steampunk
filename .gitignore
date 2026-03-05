@@ -63,3 +63,11 @@ abap-adt-api/
 
 # Session logs
 sessions/
+
+# JCo libraries (SAP proprietary, extracted by 'vsp jco setup')
+jco-libs/
+
+# Dev/debug logs
+dev_debugger.log
+dev_jco_rfc.log
+jco-proxy.log

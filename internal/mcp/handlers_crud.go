@@ -397,6 +397,11 @@ func (s *Server) handleMoveObject(ctx context.Context, request mcp.CallToolReque
 		return newToolResultError("new_package is required"), nil
 	}
 
+	// RFC mode: MoveObject requires ZADT_VSP WebSocket
+	if s.isRfcMode() {
+		return s.rfcModeWSUnavailable("MoveObject"), nil
+	}
+
 	// Ensure WebSocket client is connected
 	if err := s.ensureDebugWSClient(ctx); err != nil {
 		return newToolResultError(fmt.Sprintf("Failed to connect to ZADT_VSP WebSocket: %v. Ensure ZADT_VSP is deployed and SAPC/SICF are configured.", err)), nil

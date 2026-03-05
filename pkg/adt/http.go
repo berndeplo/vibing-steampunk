@@ -12,6 +12,13 @@ import (
 	"sync"
 )
 
+// Requester abstracts HTTP request execution for the ADT client.
+// Transport implements this for direct HTTP; RfcTransport implements it
+// for RFC sidecar proxy mode.
+type Requester interface {
+	Request(ctx context.Context, path string, opts *RequestOptions) (*Response, error)
+}
+
 // HTTPDoer is an interface for executing HTTP requests.
 // This abstraction allows for easy testing with mock implementations.
 type HTTPDoer interface {

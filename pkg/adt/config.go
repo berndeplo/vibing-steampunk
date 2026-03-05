@@ -5,6 +5,7 @@ import (
 	"crypto/tls"
 	"net/http"
 	"net/http/cookiejar"
+	"strings"
 	"time"
 )
 
@@ -48,6 +49,22 @@ type Config struct {
 	Features FeatureConfig
 	// TerminalID for debugger session (shared with SAP GUI for cross-tool debugging)
 	TerminalID string
+
+	// RFC connection settings (alternative to HTTP/BaseURL)
+	ConnectionMode   string // "http" (default) or "rfc"
+	AsHost           string // Direct app server hostname
+	SysNr            string // System number (e.g., "00")
+	MsHost           string // Message server host (load balancing)
+	MsServ           string // Message server service/port
+	R3Name           string // SAP system name
+	Group            string // Logon group
+
+	// JCo sidecar settings
+	JcoProxyJar      string // Path to jco-proxy JAR
+	JcoLibsDir       string // Path to JCo libraries directory
+	JavaPath         string // Path to java binary (default: "java")
+	RfcProxyPort     int    // Fixed sidecar port (0 = auto-assign)
+	RfcMaxConcurrent int    // Max concurrent RFC calls (default: 5)
 }
 
 // Option is a functional option for configuring the ADT client.
@@ -213,15 +230,112 @@ func WithTerminalID(terminalID string) Option {
 	}
 }
 
+// IsRfcMode returns true if the connection mode is RFC.
+func (c *Config) IsRfcMode() bool {
+	return strings.EqualFold(c.ConnectionMode, "rfc")
+}
+
+// WithConnectionMode sets the connection mode ("http" or "rfc").
+func WithConnectionMode(mode string) Option {
+	return func(c *Config) {
+		c.ConnectionMode = mode
+	}
+}
+
+// WithAsHost sets the SAP application server hostname for direct RFC connection.
+func WithAsHost(host string) Option {
+	return func(c *Config) {
+		c.AsHost = host
+	}
+}
+
+// WithSysNr sets the SAP system number for direct RFC connection.
+func WithSysNr(nr string) Option {
+	return func(c *Config) {
+		c.SysNr = nr
+	}
+}
+
+// WithMsHost sets the message server host for load-balanced RFC connection.
+func WithMsHost(host string) Option {
+	return func(c *Config) {
+		c.MsHost = host
+	}
+}
+
+// WithMsServ sets the message server service/port for load-balanced RFC connection.
+func WithMsServ(serv string) Option {
+	return func(c *Config) {
+		c.MsServ = serv
+	}
+}
+
+// WithR3Name sets the SAP system name for load-balanced RFC connection.
+func WithR3Name(name string) Option {
+	return func(c *Config) {
+		c.R3Name = name
+	}
+}
+
+// WithGroup sets the logon group for load-balanced RFC connection.
+func WithGroup(group string) Option {
+	return func(c *Config) {
+		c.Group = group
+	}
+}
+
+// WithJcoProxyJar sets the path to the JCo proxy JAR file.
+func WithJcoProxyJar(path string) Option {
+	return func(c *Config) {
+		c.JcoProxyJar = path
+	}
+}
+
+// WithJcoLibsDir sets the path to the JCo libraries directory.
+func WithJcoLibsDir(dir string) Option {
+	return func(c *Config) {
+		c.JcoLibsDir = dir
+	}
+}
+
+// WithJavaPath sets the path to the Java binary.
+func WithJavaPath(path string) Option {
+	return func(c *Config) {
+		c.JavaPath = path
+	}
+}
+
+// WithRfcProxyPort sets a fixed port for the JCo sidecar (0 = auto-assign).
+func WithRfcProxyPort(port int) Option {
+	return func(c *Config) {
+		c.RfcProxyPort = port
+	}
+}
+
+// WithRfcMaxConcurrent sets the maximum number of concurrent RFC calls.
+func WithRfcMaxConcurrent(n int) Option {
+	return func(c *Config) {
+		c.RfcMaxConcurrent = n
+	}
+}
+
 // NewHTTPClient creates an http.Client configured for the given Config.
 func (c *Config) NewHTTPClient() *http.Client {
 	jar, _ := cookiejar.New(nil)
 
-	transport := &http.Transport{
+	base := &http.Transport{
 		Proxy: http.ProxyFromEnvironment, // Honor HTTP_PROXY/HTTPS_PROXY env vars
 		TLSClientConfig: &tls.Config{
 			InsecureSkipVerify: c.InsecureSkipVerify,
 		},
+	}
+
+	// Wrap transport to fix SAP session cookies marked Secure over HTTP.
+	// SAP often sets Secure flag even on HTTP connections, which causes
+	// Go's cookie jar to drop them on subsequent requests.
+	var transport http.RoundTripper = base
+	if strings.HasPrefix(strings.ToLower(c.BaseURL), "http://") {
+		transport = &stripSecureCookieTransport{base: base}
 	}
 
 	return &http.Client{
@@ -229,4 +343,38 @@ func (c *Config) NewHTTPClient() *http.Client {
 		Transport: transport,
 		Timeout:   c.Timeout,
 	}
+}
+
+// stripSecureCookieTransport wraps an http.RoundTripper and removes the Secure
+// flag from Set-Cookie headers. This allows Go's cookie jar to persist SAP
+// session cookies when connecting over plain HTTP.
+type stripSecureCookieTransport struct {
+	base http.RoundTripper
+}
+
+func (t *stripSecureCookieTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	resp, err := t.base.RoundTrip(req)
+	if err != nil {
+		return resp, err
+	}
+	// Strip Secure flag from Set-Cookie headers so the jar persists them over HTTP
+	if cookies := resp.Header.Values("Set-Cookie"); len(cookies) > 0 {
+		resp.Header.Del("Set-Cookie")
+		for _, c := range cookies {
+			resp.Header.Add("Set-Cookie", stripSecureFlag(c))
+		}
+	}
+	return resp, err
+}
+
+// stripSecureFlag removes the Secure attribute from a Set-Cookie header value.
+func stripSecureFlag(cookie string) string {
+	parts := strings.Split(cookie, ";")
+	filtered := parts[:0]
+	for _, p := range parts {
+		if !strings.EqualFold(strings.TrimSpace(p), "secure") {
+			filtered = append(filtered, p)
+		}
+	}
+	return strings.Join(filtered, ";")
 }

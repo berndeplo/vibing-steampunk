@@ -39,6 +39,18 @@ type systemParams struct {
 	Insecure     bool
 	CookieFile   string
 	CookieString string
+
+	// RFC connection settings
+	ConnectionMode string
+	AsHost         string
+	SysNr          string
+	MsHost         string
+	MsServ         string
+	R3Name         string
+	Group          string
+	JcoLibsDir     string
+	JcoProxyJar    string
+	JavaPath       string
 }
 
 // resolveSystemParams resolves system parameters from --system flag or env vars.
@@ -70,14 +82,24 @@ func resolveSystemParams(cmd *cobra.Command) (*systemParams, error) {
 		}
 
 		return &systemParams{
-			URL:          sys.URL,
-			User:         sys.User,
-			Password:     sys.Password,
-			Client:       sys.Client,
-			Language:     sys.Language,
-			Insecure:     sys.Insecure,
-			CookieFile:   sys.CookieFile,
-			CookieString: sys.CookieString,
+			URL:            sys.URL,
+			User:           sys.User,
+			Password:       sys.Password,
+			Client:         sys.Client,
+			Language:       sys.Language,
+			Insecure:       sys.Insecure,
+			CookieFile:     sys.CookieFile,
+			CookieString:   sys.CookieString,
+			ConnectionMode: sys.ConnectionMode,
+			AsHost:         sys.AsHost,
+			SysNr:          sys.SysNr,
+			MsHost:         sys.MsHost,
+			MsServ:         sys.MsServ,
+			R3Name:         sys.R3Name,
+			Group:          sys.Group,
+			JcoLibsDir:     sys.JcoLibsDir,
+			JcoProxyJar:    sys.JcoProxyJar,
+			JavaPath:       sys.JavaPath,
 		}, nil
 	}
 

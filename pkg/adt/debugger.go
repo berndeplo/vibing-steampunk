@@ -1006,6 +1006,15 @@ func (c *Client) DebuggerDetach(ctx context.Context) error {
 	return err
 }
 
+// DebuggerResetSession clears the transport session state.
+// This is needed after debuggeeEnded to prevent "already attached" errors
+// on subsequent debug sessions, as the sap-contextid cookie carries stale debug state.
+func (c *Client) DebuggerResetSession() {
+	if rfc, ok := c.transport.(*RfcTransport); ok {
+		rfc.setSessionCookie("")
+	}
+}
+
 // DebuggerStep performs a step operation in the debugger.
 // stepType: One of stepInto, stepOver, stepReturn, stepContinue, stepRunToLine, stepJumpToLine, terminateDebuggee
 // uri: Required for stepRunToLine and stepJumpToLine (target line URI)

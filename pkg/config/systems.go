@@ -22,6 +22,18 @@ type SystemConfig struct {
 	CookieFile   string `json:"cookie_file,omitempty"`   // Path to Netscape-format cookie file
 	CookieString string `json:"cookie_string,omitempty"` // Inline cookie string
 
+	// RFC connection settings (alternative to URL-based HTTP)
+	ConnectionMode string `json:"connection_mode,omitempty"` // "http" (default) or "rfc"
+	AsHost         string `json:"ashost,omitempty"`
+	SysNr          string `json:"sysnr,omitempty"`
+	MsHost         string `json:"mshost,omitempty"`
+	MsServ         string `json:"msserv,omitempty"`
+	R3Name         string `json:"r3name,omitempty"`
+	Group          string `json:"group,omitempty"`
+	JcoLibsDir     string `json:"jco_libs_dir,omitempty"`
+	JcoProxyJar    string `json:"jco_proxy_jar,omitempty"`
+	JavaPath       string `json:"java_path,omitempty"`
+
 	// Optional safety settings per system
 	ReadOnly        bool     `json:"read_only,omitempty"`
 	AllowedPackages []string `json:"allowed_packages,omitempty"`
@@ -106,6 +118,14 @@ func (c *SystemsConfig) GetSystem(name string) (*SystemConfig, error) {
 		}
 	}
 
+	// Fallback: resolve password from .mcp.json env block
+	if sys.Password == "" {
+		envKey := fmt.Sprintf("VSP_%s_PASSWORD", strings.ToUpper(name))
+		if pwd := loadMcpEnvVar(envKey); pwd != "" {
+			sys.Password = pwd
+		}
+	}
+
 	// Apply defaults
 	if sys.Client == "" {
 		sys.Client = "001"
@@ -115,6 +135,33 @@ func (c *SystemsConfig) GetSystem(name string) (*SystemConfig, error) {
 	}
 
 	return &sys, nil
+}
+
+// mcpConfig represents the structure of .mcp.json for env var extraction.
+type mcpConfig struct {
+	McpServers map[string]struct {
+		Env map[string]string `json:"env"`
+	} `json:"mcpServers"`
+}
+
+// loadMcpEnvVar searches .mcp.json env blocks for a given variable name.
+func loadMcpEnvVar(key string) string {
+	for _, path := range []string{".mcp.json"} {
+		data, err := os.ReadFile(path)
+		if err != nil {
+			continue
+		}
+		var cfg mcpConfig
+		if err := json.Unmarshal(data, &cfg); err != nil {
+			continue
+		}
+		for _, server := range cfg.McpServers {
+			if val, ok := server.Env[key]; ok {
+				return val
+			}
+		}
+	}
+	return ""
 }
 
 // ListSystems returns a list of configured system names.
@@ -148,6 +195,15 @@ func ExampleConfig() string {
 				Client:          "100",
 				ReadOnly:        true,
 				AllowedPackages: []string{"Z*", "Y*"},
+			},
+			"rfc-direct": {
+				ConnectionMode: "rfc",
+				AsHost:         "sap-app.example.com",
+				SysNr:          "00",
+				User:           "RFC_USER",
+				Client:         "001",
+				JcoProxyJar:    "/opt/vsp/jco-proxy.jar",
+				JcoLibsDir:     "/opt/sap/jco",
 			},
 		},
 	}

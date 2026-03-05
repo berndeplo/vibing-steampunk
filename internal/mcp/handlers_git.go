@@ -19,6 +19,9 @@ import (
 // --- Git/abapGit Handlers ---
 
 func (s *Server) handleGitTypes(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	if s.isRfcMode() {
+		return s.rfcModeWSUnavailable("GitTypes"), nil
+	}
 	if errResult := s.ensureWSConnected(ctx, "GitTypes"); errResult != nil {
 		return errResult, nil
 	}
@@ -45,6 +48,9 @@ func (s *Server) handleGitTypes(ctx context.Context, request mcp.CallToolRequest
 }
 
 func (s *Server) handleGitExport(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	if s.isRfcMode() {
+		return s.rfcModeWSUnavailable("GitExport"), nil
+	}
 	if errResult := s.ensureWSConnected(ctx, "GitExport"); errResult != nil {
 		return errResult, nil
 	}

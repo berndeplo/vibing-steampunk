@@ -14,6 +14,9 @@ import (
 // --- AMDP (HANA) Debugger Handlers ---
 
 func (s *Server) handleAMDPDebuggerStart(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	if s.isRfcMode() {
+		return s.rfcModeWSUnavailable("AMDPDebuggerStart"), nil
+	}
 	// Check if session already active
 	if s.amdpWSClient != nil && s.amdpWSClient.IsActive() {
 		return newToolResultError("AMDP session already active. Use AMDPDebuggerStop first."), nil

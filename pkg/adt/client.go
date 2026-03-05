@@ -11,7 +11,7 @@ import (
 
 // Client is the main ADT API client.
 type Client struct {
-	transport *Transport
+	transport Requester
 	config    *Config
 }
 
@@ -25,8 +25,8 @@ func NewClient(baseURL, username, password string, opts ...Option) *Client {
 }
 
 // NewClientWithTransport creates a new client with a custom transport.
-// This is useful for testing.
-func NewClientWithTransport(cfg *Config, transport *Transport) *Client {
+// This is useful for testing and for RFC mode (RfcTransport).
+func NewClientWithTransport(cfg *Config, transport Requester) *Client {
 	return &Client{
 		transport: transport,
 		config:    cfg,

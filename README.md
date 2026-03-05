@@ -297,6 +297,22 @@ Configure multiple SAP systems in `.vsp.json`:
 3. `~/.vsp.json`
 4. `~/.vsp/systems.json`
 
+### RFC Connection Mode
+
+SAP HTTP ports blocked by your firewall? vsp can connect via RFC (the same protocol SAP GUI uses) through a lightweight Java sidecar:
+
+```bash
+# Quick setup
+vsp jco setup                          # Find JCo libs from Eclipse ADT
+cd sidecar/jco-proxy && mvn package    # Build the sidecar
+
+# Run in RFC mode
+vsp --connection-mode rfc --ashost sap-server.example.com --sysnr 00 \
+    --user DEVELOPER --password secret --client 001
+```
+
+All 122 tools work identically in RFC mode. See **[docs/rfc-mode.md](docs/rfc-mode.md)** for the full guide.
+
 <details>
 <summary><strong>MCP Server Configuration</strong></summary>
 

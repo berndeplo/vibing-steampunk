@@ -4,13 +4,16 @@ package mcp
 import (
 	"context"
 	"fmt"
+	"os"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
+	deps "github.com/oisee/vibing-steampunk/embedded/deps"
 	"github.com/oisee/vibing-steampunk/pkg/adt"
+	"path/filepath"
 )
 
 // AsyncTask represents a background task status.
@@ -33,6 +36,7 @@ type Server struct {
 	config         *Config                    // Server configuration for session manager creation
 	featureProber  *adt.FeatureProber         // Feature detection system (safety network)
 	featureConfig  adt.FeatureConfig          // Feature configuration
+	sidecar        *adt.SidecarManager        // JCo sidecar (RFC mode only)
 
 	// Async task management
 	asyncTasks   map[string]*AsyncTask
@@ -86,6 +90,20 @@ type Config struct {
 
 	// Debugger configuration
 	TerminalID string // SAP GUI terminal ID for cross-tool breakpoint sharing
+
+	// RFC connection settings (alternative to HTTP)
+	ConnectionMode   string
+	AsHost           string
+	SysNr            string
+	MsHost           string
+	MsServ           string
+	R3Name           string
+	Group            string
+	JcoProxyJar      string
+	JcoLibsDir       string
+	JavaPath         string
+	RfcProxyPort     int
+	RfcMaxConcurrent int
 
 	// Granular tool visibility (from .vsp.json)
 	// Key: tool name, Value: true=enabled, false=disabled
@@ -141,7 +159,69 @@ func NewServer(cfg *Config) *Server {
 	}
 	opts = append(opts, adt.WithSafety(safety))
 
-	adtClient := adt.NewClient(cfg.BaseURL, cfg.Username, cfg.Password, opts...)
+	// Create ADT client — HTTP or RFC mode
+	var adtClient *adt.Client
+	var sidecar *adt.SidecarManager
+
+	if strings.EqualFold(cfg.ConnectionMode, "rfc") {
+		// RFC mode: start JCo sidecar and use RfcTransport
+
+		// Auto-extract embedded proxy JAR if configured path doesn't exist
+		if cfg.JcoProxyJar == "" || !fileExists(cfg.JcoProxyJar) {
+			if data := deps.GetEmbeddedProxyJar(); data != nil {
+				extractDir := cfg.JcoLibsDir
+				if extractDir == "" {
+					extractDir = "./jco-libs"
+				}
+				proxyPath := filepath.Join(extractDir, "jco-proxy.jar")
+				if err := os.MkdirAll(extractDir, 0755); err == nil {
+					if err := os.WriteFile(proxyPath, data, 0644); err == nil {
+						cfg.JcoProxyJar = proxyPath
+						if cfg.Verbose {
+							fmt.Fprintf(os.Stderr, "[VERBOSE] Auto-extracted embedded proxy JAR to %s\n", proxyPath)
+						}
+					}
+				}
+			}
+		}
+
+		adtCfg := adt.NewConfig("", cfg.Username, cfg.Password, opts...)
+
+		sidecarCfg := &adt.SidecarConfig{
+			JcoProxyJar:   cfg.JcoProxyJar,
+			JcoLibsDir:    cfg.JcoLibsDir,
+			JavaPath:      cfg.JavaPath,
+			Port:          cfg.RfcProxyPort,
+			MaxConcurrent: cfg.RfcMaxConcurrent,
+			AsHost:        cfg.AsHost,
+			SysNr:         cfg.SysNr,
+			MsHost:        cfg.MsHost,
+			MsServ:        cfg.MsServ,
+			R3Name:        cfg.R3Name,
+			Group:         cfg.Group,
+			Client:        cfg.Client,
+			Username:      cfg.Username,
+			Password:      cfg.Password,
+			Language:       cfg.Language,
+		}
+		sidecar = adt.NewSidecarManager(sidecarCfg)
+
+		ctx := context.Background()
+		if err := sidecar.Start(ctx); err != nil {
+			fmt.Fprintf(os.Stderr, "[ERROR] Failed to start JCo sidecar: %v\n", err)
+			os.Exit(1)
+		}
+
+		maxConcurrent := cfg.RfcMaxConcurrent
+		if maxConcurrent <= 0 {
+			maxConcurrent = 5
+		}
+		rfcTransport := adt.NewRfcTransport(sidecar.URL(), adtCfg, maxConcurrent)
+		adtClient = adt.NewClientWithTransport(adtCfg, rfcTransport)
+	} else {
+		// HTTP mode (default)
+		adtClient = adt.NewClient(cfg.BaseURL, cfg.Username, cfg.Password, opts...)
+	}
 
 	// Set terminal ID for debugger operations
 	// Priority: 1) Custom ID (SAP GUI), 2) User-based ID
@@ -177,6 +257,7 @@ func NewServer(cfg *Config) *Server {
 		config:        cfg,
 		featureProber: featureProber,
 		featureConfig: featureConfig,
+		sidecar:       sidecar,
 		asyncTasks:    make(map[string]*AsyncTask),
 	}
 
@@ -184,6 +265,24 @@ func NewServer(cfg *Config) *Server {
 	s.registerTools(cfg.Mode, cfg.DisabledGroups, cfg.ToolsConfig)
 
 	return s
+}
+
+// Shutdown gracefully stops the server and cleans up resources.
+func (s *Server) Shutdown() {
+	if s.sidecar != nil {
+		s.sidecar.Stop()
+	}
+}
+
+// isRfcMode returns true if the server is running in RFC mode.
+func (s *Server) isRfcMode() bool {
+	return s.sidecar != nil
+}
+
+// fileExists returns true if the path exists and is a regular file.
+func fileExists(path string) bool {
+	info, err := os.Stat(path)
+	return err == nil && !info.IsDir()
 }
 
 // parseFeatureMode converts string to FeatureMode
@@ -237,7 +336,7 @@ func (s *Server) registerTools(mode string, disabledGroups string, toolsConfig m
 		},
 		"D": { // ABAP debugger (session tools - breakpoints via WebSocket ZADT_VSP)
 			"DebuggerListen", "DebuggerAttach", "DebuggerDetach",
-			"DebuggerStep", "DebuggerGetStack", "DebuggerGetVariables",
+			"DebuggerStep", "DebuggerGetStack", "DebuggerGetVariables", "DebuggerSetVariable",
 		},
 		"C": { // CTS/Transport tools
 			"ListTransports", "GetTransport",
@@ -259,7 +358,7 @@ func (s *Server) registerTools(mode string, disabledGroups string, toolsConfig m
 			// ABAP Debugger - requires ZADT_VSP WebSocket handler
 			"SetBreakpoint", "GetBreakpoints", "DeleteBreakpoint",
 			"DebuggerListen", "DebuggerAttach", "DebuggerDetach",
-			"DebuggerStep", "DebuggerGetStack", "DebuggerGetVariables",
+			"DebuggerStep", "DebuggerGetStack", "DebuggerGetVariables", "DebuggerSetVariable",
 			// AMDP/HANA Debugger - experimental, session management issues
 			"AMDPDebuggerStart", "AMDPDebuggerResume", "AMDPDebuggerStop",
 			"AMDPDebuggerStep", "AMDPGetVariables", "AMDPSetBreakpoint", "AMDPGetBreakpoints",
@@ -369,6 +468,7 @@ func (s *Server) registerTools(mode string, disabledGroups string, toolsConfig m
 		"DebuggerStep":         true, // Step through code
 		"DebuggerGetStack":     true, // Get call stack
 		"DebuggerGetVariables": true, // Get variable values
+		"DebuggerSetVariable":  true, // Set variable value
 
 		// UI5/Fiori BSP Management (3 read-only - ADT filestore is read-only)
 		"UI5ListApps":       true, // List UI5 applications
@@ -1041,6 +1141,20 @@ func (s *Server) registerTools(mode string, disabledGroups string, toolsConfig m
 				mcp.Description("Variable IDs to retrieve (e.g., ['@ROOT'] for top-level, or specific IDs like ['LV_COUNT', 'LS_DATA'])"),
 			),
 		), s.handleDebuggerGetVariables)
+	}
+
+	if shouldRegister("DebuggerSetVariable") {
+		s.mcpServer.AddTool(mcp.NewTool("DebuggerSetVariable",
+			mcp.WithDescription("Set a variable value during a debug session. Requires an active debug session (after DebuggerAttach)."),
+			mcp.WithString("variable_name",
+				mcp.Required(),
+				mcp.Description("Variable name (e.g., 'GV_SPEED', 'LV_COUNT', 'LS_DATA-FIELD')"),
+			),
+			mcp.WithString("value",
+				mcp.Required(),
+				mcp.Description("New value as string (e.g., '70', 'Hello', 'X')"),
+			),
+		), s.handleDebuggerSetVariable)
 	}
 
 	// SearchObject
