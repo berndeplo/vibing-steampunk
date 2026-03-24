@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/http/cookiejar"
 	"net/url"
 	"strings"
 	"sync"
@@ -163,9 +164,10 @@ func (t *Transport) Request(ctx context.Context, path string, opts *RequestOptio
 
 		// Handle session timeout - refresh session and retry once
 		if apiErr.IsSessionExpired() {
-			// Clear cached CSRF token and session ID
+			// Clear cached CSRF token, session ID, and stale cookies
 			t.setCSRFToken("")
 			t.setSessionID("")
+			t.clearCookieJar()
 			// Fetch new CSRF token (this establishes a new session)
 			if err := t.fetchCSRFToken(ctx); err != nil {
 				return nil, fmt.Errorf("refreshing session after timeout: %w", err)
@@ -180,6 +182,7 @@ func (t *Transport) Request(ctx context.Context, path string, opts *RequestOptio
 		if resp.StatusCode == http.StatusUnauthorized {
 			t.setCSRFToken("")
 			t.setSessionID("")
+			t.clearCookieJar()
 			if err := t.fetchCSRFToken(ctx); err != nil {
 				// Return both errors: re-auth failure wraps the original 401 context
 				// so callers can see which endpoint triggered the expiry.
@@ -412,6 +415,21 @@ func (t *Transport) setSessionID(id string) {
 	t.sessionID = id
 }
 
+// clearCookieJar replaces the cookie jar with a fresh one to discard stale
+// session cookies. When SAP returns "Session not found", the old session
+// cookies in the jar would cause the CSRF re-fetch to fail too.
+func (t *Transport) clearCookieJar() {
+	if client, ok := t.httpClient.(*http.Client); ok {
+		jar, _ := cookiejar.New(nil)
+		// Preserve insecureCookieJar wrapper if present
+		if wrapper, ok := client.Jar.(*insecureCookieJar); ok {
+			wrapper.jar = jar
+		} else {
+			client.Jar = jar
+		}
+	}
+}
+
 // isModifyingMethod returns true for HTTP methods that modify server state.
 func isModifyingMethod(method string) bool {
 	switch method {
@@ -447,7 +465,8 @@ func (e *APIError) IsSessionExpired() bool {
 	msg := strings.ToLower(e.Message)
 	return strings.Contains(msg, "icmenosession") ||
 		strings.Contains(msg, "session timed out") ||
-		strings.Contains(msg, "session no longer exists")
+		strings.Contains(msg, "session no longer exists") ||
+		strings.Contains(msg, "session not found")
 }
 
 // IsNotFoundError checks if an error is an API 404 Not Found error.

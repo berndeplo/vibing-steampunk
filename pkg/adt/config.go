@@ -5,6 +5,8 @@ import (
 	"crypto/tls"
 	"net/http"
 	"net/http/cookiejar"
+	"net/url"
+	"strings"
 	"time"
 )
 
@@ -217,6 +219,16 @@ func WithTerminalID(terminalID string) Option {
 func (c *Config) NewHTTPClient() *http.Client {
 	jar, _ := cookiejar.New(nil)
 
+	// SAP systems behind corporate firewalls often set the Secure flag on
+	// session cookies even when served over plain HTTP. Go's cookiejar
+	// correctly refuses to send Secure cookies over HTTP, which breaks
+	// session management. When connecting over HTTP we wrap the jar to
+	// strip the Secure flag so cookies are always forwarded.
+	var effectiveJar http.CookieJar = jar
+	if strings.HasPrefix(strings.ToLower(c.BaseURL), "http://") {
+		effectiveJar = &insecureCookieJar{jar: jar}
+	}
+
 	transport := &http.Transport{
 		Proxy: http.ProxyFromEnvironment, // Honor HTTP_PROXY/HTTPS_PROXY env vars
 		TLSClientConfig: &tls.Config{
@@ -225,8 +237,26 @@ func (c *Config) NewHTTPClient() *http.Client {
 	}
 
 	return &http.Client{
-		Jar:       jar,
+		Jar:       effectiveJar,
 		Transport: transport,
 		Timeout:   c.Timeout,
 	}
+}
+
+// insecureCookieJar wraps a standard cookie jar and strips the Secure flag
+// from cookies. This allows SAP session cookies (which SAP marks as Secure
+// even over HTTP) to be sent on plain HTTP connections.
+type insecureCookieJar struct {
+	jar http.CookieJar
+}
+
+func (j *insecureCookieJar) SetCookies(u *url.URL, cookies []*http.Cookie) {
+	for _, c := range cookies {
+		c.Secure = false
+	}
+	j.jar.SetCookies(u, cookies)
+}
+
+func (j *insecureCookieJar) Cookies(u *url.URL) []*http.Cookie {
+	return j.jar.Cookies(u)
 }
